@@ -1,4 +1,5 @@
 import tensorflow as tf
+import sklearn as sk
 import os
 import pickle
 import glob
@@ -18,18 +19,41 @@ class EmojiCNN:
 			print("attempting to restore model")
 
 			# get most recent file
-			files = glob.glob("tmp_%s/*.meta")
+			files = glob.glob("tmp_%s/*.meta" % self.name)
+			if not files:
+				raise IOError
+
 			files.sort(key=lambda x: -os.path.getmtime(x))
 			meta_file = files[0]
-			
-			# restore session
-			self.saver = tf.train.import_meta_graph(meta_file)
 			checkpoint_name = meta_file.split('.')[0]
+
+			self.saver = tf.train.import_meta_graph(meta_file)
 			self.saver.restore(self.sess, checkpoint_name)
 
-		except (IndexError, IOError, tf.errors.NotFoundError) as e: # initialize object as normal
-			if restore:
+			# restore class variables
+			if os.path.isfile("tmp_%s/loss.pkl" % self.name):
+				with open("tmp_%s/loss.pkl" % self.name, 'r') as f:
+					self.train_loss, self.valid_loss = pickle.load(f)
+			else:
+				self.train_loss = list()
+				self.valid_loss = list()
+
+			graph = tf.get_default_graph()
+			self.input_words = graph.get_tensor_by_name('%s/word_ids:0' % self.name)
+			self.true_emojis = graph.get_tensor_by_name('%s/emoji_ids:0' % self.name)
+			self.keep_rate = graph.get_tensor_by_name('%s/full/keep_rate:0' % self.name)
+			self.output = graph.get_tensor_by_name('%s/output:0' % self.name)
+			self.prediction = graph.get_tensor_by_name('%s/prediction:0' % self.name)
+			self.loss = graph.get_tensor_by_name('%s/loss:0' % self.name)
+			self.global_step = graph.get_tensor_by_name('%s/global_step:0' % self.name)
+			self.trainer = graph.get_operation_by_name('%s/trainer' % self.name)
+
+			print("restored from %s" % checkpoint_name)
+
+		except (IOError, tf.errors.NotFoundError) as e: # initialize object as normal
+			if restore: # if failed to restore, reset session
 				print("failed to restore model")
+				#tf.reset_default_graph() clear graph
 
 			print("building model")
 			with tf.variable_scope(self.name):
@@ -54,11 +78,11 @@ class EmojiCNN:
 						pool = tf.reduce_max(conv, axis=1)
 						outputs.append(pool)
 
-					self.cnn_output = tf.nn.relu(tf.concat(outputs, axis=1))
+					cnn_output = tf.nn.relu(tf.concat(outputs, axis=1))
 
 				# create fully connected layer
 				with tf.variable_scope('full'):
-					hidden = self.cnn_output
+					hidden = cnn_output
 					self.keep_rate = tf.placeholder(tf.float32, name='keep_rate')
 					for i, dim in enumerate(layers):
 						weights = tf.get_variable(name="hidden_%i_weight" % (i+1),
@@ -68,35 +92,41 @@ class EmojiCNN:
 						hidden = tf.nn.relu(tf.matmul(hidden, weights) + bias)
 						hidden = tf.nn.dropout(hidden, keep_prob=self.keep_rate, name="hidden_%s_output" % (i+1))
 
-					self.full_output = hidden
+					full_output = hidden
 
 				# output emoji softmax prediction
 				self.true_emojis = tf.placeholder(tf.int64, [None, self.loader.emoji_vocab_size], name='emoji_ids')
 				weight = tf.get_variable(name="softmax_weight",
-						shape=[self.full_output.get_shape()[1], self.loader.emoji_vocab_size],
+						shape=[full_output.get_shape()[1], self.loader.emoji_vocab_size],
 						initializer=trnc_norm_init)
 				bias = tf.get_variable(name="softmax_bias",	shape=[self.loader.emoji_vocab_size],
 						initializer=cnst_init)
-				self.output = tf.nn.relu(tf.matmul(self.full_output, weight) + bias)
-				self.prediction = tf.nn.softmax(self.output)
+				self.output = tf.nn.relu(tf.matmul(full_output, weight) + bias, name='output')
+				self.prediction = tf.nn.softmax(self.output, name='prediction')
+				
+				# metrics
 				self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-						labels=tf.squeeze(self.true_emojis), logits=self.output))
-				# TODO create f1 score
-				# TODO create accuracy score
+						labels=tf.squeeze(self.true_emojis), logits=self.output), name='loss')
 
+				# optimizer and tracking
 				self.global_step = tf.get_variable(name='global_step',
 						initializer=tf.constant(0, dtype=tf.int64), trainable=False)
-				self.trainer = tf.train.AdamOptimizer().minimize(self.loss, global_step=self.global_step)
+				self.trainer = tf.train.AdamOptimizer().minimize(self.loss,
+						global_step=self.global_step, name='trainer')
 				
+				# ready to go
 				self.sess.run(tf.global_variables_initializer())
 				self.saver = tf.train.Saver()
+				self.train_loss = list()
+				self.valid_loss = list()
 
 	# train model
 	def train(self, epoch):
 		self.loader.reset_batch(dataset='train')
 		batch_count = self.loader.batches[0]
 		step = self.sess.run(self.global_step) % batch_count
-		while step < batch_count:
+		check = (batch_count / 1000) * 100
+		for i in xrange(batch_count):
 			data = self.loader.next_batch(dataset='train')
 
 			if data is None:
@@ -108,8 +138,9 @@ class EmojiCNN:
 				self.true_emojis : data[1],
 				self.keep_rate : 0.5
 			}
-			_, loss = self.sess.run([self.trainer, self.loss], feed_dict=feed_dict)
-			if (step+1) % 300 == 0:
+			_, loss, step = self.sess.run([self.trainer, self.loss, self.global_step], feed_dict=feed_dict)
+			step %= batch_count
+			if (step+1) % check == 0:
 				print("epoch %d: %d/%d, test loss %2.6f" % (epoch, step+1, self.loader.batches[0], loss))
 
 			step = self.sess.run(self.global_step) % batch_count
@@ -131,7 +162,8 @@ class EmojiCNN:
 				self.true_emojis : data[1],
 				self.keep_rate : 1.0
 			}
-			total_loss += self.sess.run(self.loss, feed_dict=feed_dict)
+			batch_loss, emoji_pred, emoji_true = self.sess.run([self.loss, self.prediction, self.true_emojis], feed_dict=feed_dict)
+
 
 		return float(total_loss) / batch_count
 
@@ -151,19 +183,22 @@ class EmojiCNN:
 			os.mkdir('tmp_%s' % self.name)
 		
 		# pickle picklable self objects
+		if self.train_loss and self.valid_loss:
+			with open('tmp_%s/loss.pkl' % self.name, 'w+') as f:
+				pickle.dump((self.train_loss, self.valid_loss), f)
+
 		self.saver.save(self.sess, "tmp_%s/%s" % (self.name, key))
+		print("saved %s" % key)
 
 	# train, save, and test model
 	def run(self, epochs=100):
-		self.save('initial')
-
-		self.train_loss = list()
-		self.valid_loss = list()
-		self.train_loss.append(self.test(dataset='train'))
-		self.valid_loss.append(self.test(dataset='validation'))
-
 		total_steps = epochs * self.loader.batches[0]
 		step = self.sess.run(self.global_step)
+
+		if step == 0:
+			self.save('initial')
+			self.train_loss.append(self.test(dataset='train'))
+			self.valid_loss.append(self.test(dataset='validation'))
 		
 		print("initial train and validation loss: %2.6f %2.6f" % (self.train_loss[0], self.valid_loss[0]))
 		while step < total_steps:

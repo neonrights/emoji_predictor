@@ -26,6 +26,7 @@ for batch_size in batch_sizes:
 					layers=[300],
 					restore=True)
 		_, valid_loss = model.run(epochs=10)
+
 		handle, _ = plt.plot(valid_loss)
 		handles.append(handle)
 
