@@ -17,14 +17,14 @@ def load(filename):
 
 class WordLoader:
 	DATA2ID = {'train': 0, 'validation': 1, 'test': 2}
-	PATH = './data/'
+	PATH = './data'
 
 	def __init__(self, data='5', batch_size=100):
 		self.batch_size = batch_size
 		try: # to load saved vocab data
 			print('loading saved vocabulary and processed data')
-			self.word2id, self.id2word, self.emoji2id, self.id2emoji = load('tmp/%s_word_vocab.pkl' % data)
-			self.word_tensors, self.emoji_tensors = load('tmp/%s_word_tensor.pkl' % data)
+			self.word2id, self.id2word, self.emoji2id, self.id2emoji = load(os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
+			self.word_tensors, self.emoji_tensors = load(os.path.join(self.PATH, '%s_word_tensor.pkl' % data))
 			self.max_seq_len = self.word_tensors[0].shape[1]
 			self.samples = [tensor.shape[0] for tensor in self.word_tensors]
 			self.word_vocab_size = len(self.id2word)
@@ -124,11 +124,8 @@ class WordLoader:
 			self.emoji_tensors.append(emoji_tensor)
 
 		# saved vocabulary and processed data
-		if not os.path.isdir('tmp'):
-			os.mkdir('tmp')
-
-		save([self.word2id, self.id2word, self.emoji2id, self.id2emoji], 'tmp/%s_word_vocab.pkl' % data)
-		save([self.word_tensors, self.emoji_tensors], 'tmp/%s_word_tensor.pkl' % data)
+		save([self.word2id, self.id2word, self.emoji2id, self.id2emoji], os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
+		save([self.word_tensors, self.emoji_tensors], os.path.join(self.PATH, '%s_word_tensor.pkl' % data))
 
 
 	def next_batch(self, dataset='train'):
