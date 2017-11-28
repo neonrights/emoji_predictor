@@ -49,7 +49,7 @@ class EmojiCNN:
 				self.full_output = hidden
 
 			# output emoji softmax prediction
-			self.true_emojis = tf.placeholder(tf.int64, [None], name='emoji-ids')
+			self.true_emojis = tf.placeholder(tf.int64, [None, self.loader.emoji_vocab_size], name='emoji-ids')
 			weight = tf.get_variable(name="softmax-weight",
 					shape=[self.full_output.get_shape()[1], self.loader.emoji_vocab_size],
 					initializer=trnc_norm_init)
@@ -115,7 +115,7 @@ class EmojiCNN:
 
 
 	def save(self, key):
-		if not os.isdir('tmp'):
+		if not os.path.isdir('tmp'):
 			os.mkdir('tmp')
 
 		self.saver.save(sess, "tmp/%s-%s.ckpt" % (self.name, key))

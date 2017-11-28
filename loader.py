@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
 import pickle
 import string
+import os
 
 from collections import Counter
-from os import path
 
 
 def save(obj, filename):
@@ -23,17 +23,17 @@ class WordLoader:
 		self.batch_size = batch_size
 		try: # to load saved vocab data
 			print('loading saved vocabulary and processed data')
-			self.word2id, self.id2word, self.emoji2id, self.id2emoji = load('%s_word_vocab.pkl' % data)
-			self.word_tensors, self.emoji_tensors = load('%s_word_tensor.pkl' % data)
+			self.word2id, self.id2word, self.emoji2id, self.id2emoji = load('tmp/%s_word_vocab.pkl' % data)
+			self.word_tensors, self.emoji_tensors = load('tmp/%s_word_tensor.pkl' % data)
 			self.max_seq_len = self.word_tensors[0].shape[1]
 			self.samples = [tensor.shape[0] for tensor in self.word_tensors]
+			self.word_vocab_size = len(self.id2word)
+			self.emoji_vocab_size = len(self.emoji2id)
 		except IOError:
 			print('failed to load, building vocabulary and processed data')
 			self._build_vocab(data)
 
-		self.word_vocab_size = len(self.id2word)
-		self.emoji_vocab_size = len(self.emoji2id)
-		print("%d words, %d emojis" % (self.word_vocab_size, self.emoji_vocab_size))
+		print("%d words, %d emojis" % (self.word_vocab_size-2, self.emoji_vocab_size-2))
 
 		# reshape data into batches
 		self.batch_num = [0, 0, 0]
@@ -48,8 +48,8 @@ class WordLoader:
 			word_tensor = self.word_tensors[idx]
 			emoji_tensor = self.emoji_tensors[idx]
 			if offset != 0:
-				word_tensor = word_tensor[:-offset,:]
-				emoji_tensor = emoji_tensor[:-offset]
+				word_tensor = word_tensor[:-offset, :]
+				emoji_tensor = emoji_tensor[:-offset, :]
 
 			word_tensor = np.vsplit(word_tensor, self.batches[idx])
 			emoji_tensor = np.split(emoji_tensor, self.batches[idx])
@@ -63,9 +63,9 @@ class WordLoader:
 	def _build_vocab(self, data):
 		# create vocab and ids from either character or words
 		filenames = [
-			path.join(self.PATH, '%s_train' % data),
-			path.join(self.PATH, '%s_validation' % data),
-			path.join(self.PATH, '%s_test' % data)
+			os.path.join(self.PATH, '%s_train' % data),
+			os.path.join(self.PATH, '%s_validation' % data),
+			os.path.join(self.PATH, '%s_test' % data)
 		]
 
 		# get counts and samples
@@ -102,17 +102,20 @@ class WordLoader:
 			self.emoji2id[emoji] = len(self.id2emoji)
 			self.id2emoji.append(emoji)
 
+		self.word_vocab_size = len(self.id2word)
+		self.emoji_vocab_size = len(self.emoji2id)
+
 		# create tensor from word ids
 		self.word_tensors = list()
 		self.emoji_tensors = list()
 		for idx, filename in enumerate(filenames):
 			word_tensor = np.zeros((self.samples[idx], self.max_seq_len), dtype=np.int64)
-			emoji_tensor = np.zeros(self.samples[idx], dtype=np.int64)
+			emoji_tensor = np.zeros((self.samples[idx], self.emoji_vocab_size), dtype=np.int64)
 			with open(filename, 'r') as f:
 				for i, line in enumerate(f):
 					line = line.translate(None, string.punctuation)
 					words = line.split()
-					emoji_tensor[i] = self.emoji2id[words[-1]]
+					emoji_tensor[i, self.emoji2id[words[-1]]] = 1
 					words = words[:-1]
 					for j, word in enumerate(words):
 						word_tensor[i, j] = self.word2id[word]
@@ -121,8 +124,11 @@ class WordLoader:
 			self.emoji_tensors.append(emoji_tensor)
 
 		# saved vocabulary and processed data
-		save([self.word2id, self.id2word, self.emoji2id, self.id2emoji], '%s_word_vocab.pkl' % data)
-		save([self.word_tensors, self.emoji_tensors], '%s_word_tensor.pkl' % data)
+		if not os.path.isdir('tmp'):
+			os.mkdir('tmp')
+
+		save([self.word2id, self.id2word, self.emoji2id, self.id2emoji], 'tmp/%s_word_vocab.pkl' % data)
+		save([self.word_tensors, self.emoji_tensors], 'tmp/%s_word_tensor.pkl' % data)
 
 
 	def next_batch(self, dataset='train'):
