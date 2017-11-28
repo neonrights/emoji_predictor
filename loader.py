@@ -15,10 +15,10 @@ def load(filename):
 	with open(filename, 'r') as f:
 		return pickle.load(f)
 
-DATA2ID = {'train': 0, 'validation': 1, 'test': 2}
-PATH = './data/'
-
 class WordLoader:
+	DATA2ID = {'train': 0, 'validation': 1, 'test': 2}
+	PATH = './data/'
+
 	def __init__(self, data='5', batch_size=100):
 		self.batch_size = batch_size
 		try: # to load saved vocab data
@@ -33,6 +33,7 @@ class WordLoader:
 
 		self.word_vocab_size = len(self.id2word)
 		self.emoji_vocab_size = len(self.emoji2id)
+		print("%d words, %d emojis" % (self.word_vocab_size, self.emoji_vocab_size))
 
 		# reshape data into batches
 		self.batch_num = [0, 0, 0]
@@ -62,9 +63,9 @@ class WordLoader:
 	def _build_vocab(self, data):
 		# create vocab and ids from either character or words
 		filenames = [
-			path.join(PATH, '%s_train' % data),
-			path.join(PATH, '%s_validation' % data),
-			path.join(PATH, '%s_test' % data)
+			path.join(self.PATH, '%s_train' % data),
+			path.join(self.PATH, '%s_validation' % data),
+			path.join(self.PATH, '%s_test' % data)
 		]
 
 		# get counts and samples
@@ -88,15 +89,15 @@ class WordLoader:
 			self.samples.append(line_count)
 
 		# build word vocab
-		self.word2id = {' ': 0}
-		self.id2word = [' ']
+		self.word2id = {' ': 0, '<unk>': 1}
+		self.id2word = [' ', '<unk>']
 		for word, _ in word_counts.most_common():
 			self.word2id[word] = len(self.id2word)
 			self.id2word.append(word)
 
 		# build emoji vocab
-		self.emoji2id = {' ': 0}
-		self.id2emoji = [' ']
+		self.emoji2id = {' ': 0, '<unk>': 1}
+		self.id2emoji = [' ', '<unk>']
 		for emoji, _ in emoji_counts.most_common():
 			self.emoji2id[emoji] = len(self.id2emoji)
 			self.id2emoji.append(emoji)
@@ -125,14 +126,32 @@ class WordLoader:
 
 
 	def next_batch(self, dataset='train'):
-		idx = DATA2ID[dataset]
+		idx = self.DATA2ID[dataset]
 		if self.batch_num[idx] >= self.batches[idx]: # reset, new epoch
 			self.batch_num[idx] = 0
 			return None
 		else:
-			return self.word_tensors[idx][self.batch_num[idx]]
+			data = (self.word_tensors[idx][self.batch_num[idx]],
+					self.emoji_tensors[idx][self.batch_num[idx]])
+			self.batch_num[idx] += 1
+			return data
 
+
+	def reset_batch(self, dataset='train'):
+		self.batch_num[self.DATA2ID[dataset]] = 0
 
 	def batch_number(self, dataset='train'):
-		return self.batch_num[DATA2ID[dataset]]
+		return self.batch_num[self.DATA2ID[dataset]]
+
+	def sentence2tensor(self, sentence):
+		cleaned = sentence.translate(None, string.punctuation)
+		words = cleaned.split()
+		tensor = np.zeros(len(words))
+		for i, word in enumerate(words):
+			try:
+				tensor[i] = self.word2id[word]
+			except KeyError: # label as unknown if not in vocab
+				tensor[i] = 1
+
+		return tensor
 
