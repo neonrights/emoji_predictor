@@ -1,3 +1,6 @@
 *.pyc
 *.pdf
 *.pkl
+*.meta
+checkpoint
+tmp*
