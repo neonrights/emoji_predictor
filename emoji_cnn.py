@@ -6,10 +6,11 @@ import glob
 from loader import *
 
 class EmojiCNN:
-	def __init__(self, sess, data, batch_size, name, embed_dim, kernel_widths, kernel_filters, layers, restore=False):
+	def __init__(self, sess, data, name, kernel_widths, kernel_filters, batch_size=100, embed_dim=50, layers=list(), weighted=False, restore=False):
 		self.sess = sess
 		self.name = name
 		self.loader = WordLoader(data=data, batch_size=batch_size)
+		self.use_weights = weighted
 
 		try: # to restore object if desired
 			if not restore:
@@ -40,6 +41,7 @@ class EmojiCNN:
 			graph = tf.get_default_graph()
 			self.input_words = graph.get_tensor_by_name('%s/word_ids:0' % self.name)
 			self.true_emojis = graph.get_tensor_by_name('%s/emoji_ids:0' % self.name)
+			self.weights = graph.get_tensor_by_name('%s/weights:0' % self.name)
 			self.keep_rate = graph.get_tensor_by_name('%s/full/keep_rate:0' % self.name)
 			self.output = graph.get_tensor_by_name('%s/output:0' % self.name)
 			self.prediction = graph.get_tensor_by_name('%s/prediction:0' % self.name)
@@ -92,7 +94,7 @@ class EmojiCNN:
 						hidden = tf.nn.dropout(hidden, keep_prob=self.keep_rate, name="hidden_%s_output" % (i+1))
 
 				# output emoji softmax prediction
-				self.true_emojis = tf.placeholder(tf.int64, [None, self.loader.emoji_vocab_size], name='emoji_ids')
+				self.true_emojis = tf.placeholder(tf.int64, [None], name='emoji_ids')
 				weight = tf.get_variable(name="softmax_weight",
 						shape=[hidden.get_shape()[1], self.loader.emoji_vocab_size],
 						initializer=trnc_norm_init)
@@ -101,9 +103,11 @@ class EmojiCNN:
 				self.output = tf.nn.relu(tf.matmul(hidden, weight) + bias, name='output')
 				self.prediction = tf.argmax(tf.nn.softmax(self.output), axis=1, name='prediction')
 				
-				# metrics
-				self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-						labels=tf.squeeze(self.true_emojis), logits=self.output), name='loss')
+				# loss metric
+				self.weights = tf.placeholder(tf.float32, None, name='weights')
+				unweighted_loss = tf.nn.softmax_cross_entropy_with_logits(
+						labels=tf.one_hot(self.true_emojis, self.loader.emoji_vocab_size), logits=self.output)
+				self.loss = tf.reduce_mean(self.weights * unweighted_loss, name='loss')
 
 				# optimizer and tracking
 				self.global_step = tf.get_variable(name='global_step',
@@ -126,6 +130,14 @@ class EmojiCNN:
 		check = (batch_count / 1000) * 100
 		for i in xrange(batch_count):
 			data = self.loader.next_batch(dataset='train')
+			if self.use_weights:
+				N = self.loader.batch_size
+				weights = np.zeros(N)
+				for j in xrange(N):
+					weights[j] = self.loader.weights[data[1][j]]
+			else:
+				weights = np.ones(self.loader.batch_size)
+
 
 			if data is None:
 				print("training prematurely stopped")
@@ -134,7 +146,8 @@ class EmojiCNN:
 			feed_dict = {
 				self.input_words : data[0],
 				self.true_emojis : data[1],
-				self.keep_rate : 0.5
+				self.keep_rate : 0.5,
+				self.weights : weights
 			}
 			_, loss, step = self.sess.run([self.trainer, self.loss, self.global_step], feed_dict=feed_dict)
 			step %= batch_count
@@ -158,7 +171,8 @@ class EmojiCNN:
 			feed_dict = {
 				self.input_words : data[0],
 				self.true_emojis : data[1],
-				self.keep_rate : 1.0
+				self.keep_rate : 1.0,
+				self.weights : np.ones(self.loader.batch_size)
 			}
 			total_loss += self.sess.run(self.loss, feed_dict=feed_dict)
 

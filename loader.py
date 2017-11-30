@@ -23,13 +23,13 @@ class WordLoader:
 		self.batch_size = batch_size
 		try: # to load saved vocab data
 			print('loading saved vocabulary and processed data')
-			self.word2id, self.id2word, self.emoji2id, self.id2emoji = load(os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
+			self.word2id, self.id2word, self.emoji2id, self.id2emoji, self.weights = load(os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
 			self.word_tensors, self.emoji_tensors = load(os.path.join(self.PATH, '%s_word_tensor.pkl' % data))
 			self.max_seq_len = self.word_tensors[0].shape[1]
 			self.samples = [tensor.shape[0] for tensor in self.word_tensors]
 			self.word_vocab_size = len(self.id2word)
 			self.emoji_vocab_size = len(self.emoji2id)
-		except IOError:
+		except (IOError, EOFError) as e:
 			print('failed to load, building vocabulary and processed data')
 			self._build_vocab(data)
 
@@ -49,7 +49,7 @@ class WordLoader:
 			emoji_tensor = self.emoji_tensors[idx]
 			if offset != 0:
 				word_tensor = word_tensor[:-offset, :]
-				emoji_tensor = emoji_tensor[:-offset, :]
+				emoji_tensor = emoji_tensor[:-offset]
 
 			word_tensor = np.vsplit(word_tensor, self.batches[idx])
 			emoji_tensor = np.split(emoji_tensor, self.batches[idx])
@@ -98,10 +98,16 @@ class WordLoader:
 		# build emoji vocab
 		self.emoji2id = dict()
 		self.id2emoji = list()
-		for emoji, _ in emoji_counts.most_common():
+		self.weights = np.zeros(len(emoji_counts))
+		total_samples = sum(self.samples)
+		for emoji, count in emoji_counts.most_common():
 			self.emoji2id[emoji] = len(self.id2emoji)
 			self.id2emoji.append(emoji)
+			self.weights[self.emoji2id[emoji]] = total_samples / count
 
+		# normalize weights
+		self.weights /= self.weights.sum()
+		self.weights *= self.weights.shape[0]
 		self.word_vocab_size = len(self.id2word)
 		self.emoji_vocab_size = len(self.emoji2id)
 
@@ -110,12 +116,12 @@ class WordLoader:
 		self.emoji_tensors = list()
 		for idx, filename in enumerate(filenames):
 			word_tensor = np.zeros((self.samples[idx], self.max_seq_len), dtype=np.int64)
-			emoji_tensor = np.zeros((self.samples[idx], self.emoji_vocab_size), dtype=np.int64)
+			emoji_tensor = np.zeros((self.samples[idx]), dtype=np.int64)
 			with open(filename, 'r') as f:
 				for i, line in enumerate(f):
 					line = line.translate(None, string.punctuation)
 					words = line.split()
-					emoji_tensor[i, self.emoji2id[words[-1]]] = 1
+					emoji_tensor[i] = self.emoji2id[words[-1]]
 					words = words[:-1]
 					for j, word in enumerate(words):
 						word_tensor[i, j] = self.word2id[word]
@@ -124,7 +130,7 @@ class WordLoader:
 			self.emoji_tensors.append(emoji_tensor)
 
 		# saved vocabulary and processed data
-		save([self.word2id, self.id2word, self.emoji2id, self.id2emoji], os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
+		save([self.word2id, self.id2word, self.emoji2id, self.id2emoji, self.weights], os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
 		save([self.word_tensors, self.emoji_tensors], os.path.join(self.PATH, '%s_word_tensor.pkl' % data))
 
 

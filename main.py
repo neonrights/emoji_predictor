@@ -5,18 +5,18 @@ plt.switch_backend('agg')
 
 from emoji_cnn import EmojiCNN
 
-K = 5
+K = 20
 with tf.Session() as sess:
 	model = EmojiCNN(sess,
 		data=str(K),
 		batch_size=100,
-		name='model_l100',
+		name='model',
 		embed_dim=50,
 		kernel_widths=[3, 4, 5],
 		kernel_filters=[64, 64 ,64],
 		layers=[100],
-		restore=True)
-	train_loss, valid_loss = model.run(epochs=10)
+		weighted=True)
+	train_loss, valid_loss = model.run(epochs=5)
 
 	# generate training data
 	fig = plt.figure()
@@ -31,7 +31,7 @@ with tf.Session() as sess:
 	plt.close(fig)
 
 	# generate performance metrics
-	conf_mat = np.zeros((K,K))
+	conf_mat = np.zeros((K,K), dtype=np.int32)
 	samples = model.loader.batches[2]
 	model.loader.reset_batch('test')
 	for i in xrange(samples):
@@ -48,13 +48,16 @@ with tf.Session() as sess:
 		for j in xrange(K):
 			ax.text(i, j, str(conf_mat[j,i]), va='center', ha='center')
 
+	fig.savefig('confusion.png')
+	plt.close(fig)
+
 	precision = np.zeros(K)
 	recall = np.zeros(K)
 	f1 = np.zeros(K)
 
 	for i in xrange(K):
-		precision[i] = conf_mat[i,i] / float(conf_mat[:,i].sum())
-		recall[i] = conf_mat[i,i] / float(conf_mat[i,:].sum())
+		precision[i] = conf_mat[i,i] / float(conf_mat[:,i].sum() + 1e-12)
+		recall[i] = conf_mat[i,i] / float(conf_mat[i,:].sum() + 1e-12)
 		f1[i] = 2 * precision[i] * recall[i] / (precision[i] + recall[i])
 	
 	print('Precision %s' % precision)
