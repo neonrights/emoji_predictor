@@ -33,7 +33,7 @@ class WordLoader:
 			print('failed to load, building vocabulary and processed data')
 			self._build_vocab(data)
 
-		print("%d words, %d emojis" % (self.word_vocab_size-2, self.emoji_vocab_size-2))
+		print("%d words, %d emojis" % (self.word_vocab_size-2, self.emoji_vocab_size))
 
 		# reshape data into batches
 		self.batch_num = [0, 0, 0]
@@ -96,8 +96,8 @@ class WordLoader:
 			self.id2word.append(word)
 
 		# build emoji vocab
-		self.emoji2id = {' ': 0, '<unk>': 1}
-		self.id2emoji = [' ', '<unk>']
+		self.emoji2id = dict()
+		self.id2emoji = list()
 		for emoji, _ in emoji_counts.most_common():
 			self.emoji2id[emoji] = len(self.id2emoji)
 			self.id2emoji.append(emoji)

@@ -1,5 +1,4 @@
 import tensorflow as tf
-import sklearn as sk
 import os
 import pickle
 import glob
@@ -82,8 +81,8 @@ class EmojiCNN:
 
 				# create fully connected layer
 				with tf.variable_scope('full'):
-					hidden = cnn_output
 					self.keep_rate = tf.placeholder(tf.float32, name='keep_rate')
+					hidden = tf.nn.dropout(cnn_output, keep_prob=self.keep_rate, name="initial_input")
 					for i, dim in enumerate(layers):
 						weights = tf.get_variable(name="hidden_%i_weight" % (i+1),
 								shape=[hidden.get_shape()[1], dim],	initializer=trnc_norm_init)
@@ -92,17 +91,15 @@ class EmojiCNN:
 						hidden = tf.nn.relu(tf.matmul(hidden, weights) + bias)
 						hidden = tf.nn.dropout(hidden, keep_prob=self.keep_rate, name="hidden_%s_output" % (i+1))
 
-					full_output = hidden
-
 				# output emoji softmax prediction
 				self.true_emojis = tf.placeholder(tf.int64, [None, self.loader.emoji_vocab_size], name='emoji_ids')
 				weight = tf.get_variable(name="softmax_weight",
-						shape=[full_output.get_shape()[1], self.loader.emoji_vocab_size],
+						shape=[hidden.get_shape()[1], self.loader.emoji_vocab_size],
 						initializer=trnc_norm_init)
 				bias = tf.get_variable(name="softmax_bias",	shape=[self.loader.emoji_vocab_size],
 						initializer=cnst_init)
-				self.output = tf.nn.relu(tf.matmul(full_output, weight) + bias, name='output')
-				self.prediction = tf.nn.softmax(self.output, name='prediction')
+				self.output = tf.nn.relu(tf.matmul(hidden, weight) + bias, name='output')
+				self.prediction = tf.argmax(tf.nn.softmax(self.output), axis=1, name='prediction')
 				
 				# metrics
 				self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
@@ -119,6 +116,7 @@ class EmojiCNN:
 				self.saver = tf.train.Saver()
 				self.train_loss = list()
 				self.valid_loss = list()
+				print("model built")
 
 	# train model
 	def train(self, epoch):
@@ -162,20 +160,21 @@ class EmojiCNN:
 				self.true_emojis : data[1],
 				self.keep_rate : 1.0
 			}
-			batch_loss, emoji_pred, emoji_true = self.sess.run([self.loss, self.prediction, self.true_emojis], feed_dict=feed_dict)
-
+			total_loss += self.sess.run(self.loss, feed_dict=feed_dict)
 
 		return float(total_loss) / batch_count
 
 
 	def predict(self, sentence):
-		input_tensor = self.loader.sentence2tensor(sentence)
+		if type(sentence) is str:
+			sentence = self.loader.sentence2tensor(sentence)
+
 		feed_dict = {
-			self.input_words : input_tensor,
+			self.input_words : sentence,
 			self.keep_rate : 1.0
 		}
 		predicted = self.sess.run(self.prediction, feed_dict=feed_dict)
-		return self.loader.id2emoji[predicted]
+		return [self.loader.id2emoji(predict+1) for predict in predicted]
 
 
 	def save(self, key):
@@ -196,7 +195,6 @@ class EmojiCNN:
 		step = self.sess.run(self.global_step)
 
 		if step == 0:
-			self.save('initial')
 			self.train_loss.append(self.test(dataset='train'))
 			self.valid_loss.append(self.test(dataset='validation'))
 		
