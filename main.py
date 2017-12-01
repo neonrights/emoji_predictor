@@ -10,13 +10,14 @@ with tf.Session() as sess:
 	model = EmojiCNN(sess,
 		data=str(K),
 		batch_size=100,
-		name='model',
-		embed_dim=50,
-		kernel_widths=[3, 4, 5],
-		kernel_filters=[64, 64 ,64],
-		layers=[100],
-		weighted=True)
-	train_loss, valid_loss = model.run(epochs=5)
+		name='baseline-w',
+		embedding=50,
+		kernel_widths=[3,4,5],
+		kernel_filters=[64,64,64],
+		layers=[],
+		weighted=True,
+		restore='latest')
+	train_loss, valid_loss = model.run(epochs=4)
 
 	# generate training data
 	fig = plt.figure()
@@ -37,10 +38,10 @@ with tf.Session() as sess:
 	for i in xrange(samples):
 		data = model.loader.next_batch('test')
 		predicted = sess.run(model.prediction, feed_dict={model.input_words: data[0], model.keep_rate: 1.0})
-		true_vals = np.argmax(data[1], axis=1)
+		true_vals = data[1]
 
 		for j in xrange(100):
-			conf_mat[true_vals[j], predicted[j]] += 1
+			conf_mat[predicted[j], true_vals[j]] += 1
 
 	fig, ax = plt.subplots()
 	ax.matshow(conf_mat, cmap=plt.cm.Blues)
@@ -56,9 +57,9 @@ with tf.Session() as sess:
 	f1 = np.zeros(K)
 
 	for i in xrange(K):
-		precision[i] = conf_mat[i,i] / float(conf_mat[:,i].sum() + 1e-12)
-		recall[i] = conf_mat[i,i] / float(conf_mat[i,:].sum() + 1e-12)
-		f1[i] = 2 * precision[i] * recall[i] / (precision[i] + recall[i])
+		precision[i] = conf_mat[i,i] / float(conf_mat[i,:].sum() + 1e-12)
+		recall[i] = conf_mat[i,i] / float(conf_mat[:,i].sum() + 1e-12)
+		f1[i] = 2 * precision[i] * recall[i] / (precision[i] + recall[i] + 1e-12)
 	
 	print('Precision %s' % precision)
 	print('Recall %s' % recall)

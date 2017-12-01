@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 import os
 import pickle
 import glob
@@ -6,25 +7,29 @@ import glob
 from loader import *
 
 class EmojiCNN:
-	def __init__(self, sess, data, name, kernel_widths, kernel_filters, batch_size=100, embed_dim=50, layers=list(), weighted=False, restore=False):
+	def __init__(self, sess, data, name, kernel_widths, kernel_filters, batch_size=100, embedding=50, layers=list(), weighted=False, restore=None):
 		self.sess = sess
 		self.name = name
-		self.loader = WordLoader(data=data, batch_size=batch_size)
+		self.loader = WordLoader(data=data, batch_size=batch_size, glove=embedding)
 		self.use_weights = weighted
 
 		try: # to restore object if desired
 			if not restore:
 				raise IOError
 
-			print("attempting to restore model")
-
-			# get most recent file
-			files = glob.glob("tmp_%s/*.meta" % self.name)
-			if not files:
-				raise IOError
-
-			files.sort(key=lambda x: -os.path.getmtime(x))
-			meta_file = files[0]
+			if os.path.isfile("tmp_%s/%s.meta" % (self.name, restore)):
+				print("attempting to restore model from %s" % restore)
+				meta_file = "tmp_%s/%s.meta" % (self.name, restore)
+			else:
+				# get most recent file
+				print("attempting to restore model from latest checkpoint")
+				files = glob.glob("tmp_%s/*.meta" % self.name)
+				if not files:
+					raise IOError
+			
+				files.sort(key=lambda x: -os.path.getmtime(x))
+				meta_file = files[0]
+			
 			checkpoint_name = meta_file.split('.')[0]
 
 			self.saver = tf.train.import_meta_graph(meta_file)
@@ -60,11 +65,11 @@ class EmojiCNN:
 			with tf.variable_scope(self.name):
 				# embed words
 				self.input_words = tf.placeholder(tf.int64, [None, None], name='word_ids')
-				word_embeds = tf.get_variable("word_embedding", [self.loader.word_vocab_size, embed_dim])
+				word_embeds = tf.get_variable("word_embedding", initializer=tf.constant(self.loader.glove_embed, dtype=tf.float32))
 				embed_words = tf.nn.embedding_lookup(word_embeds, self.input_words)
 
 				# initializers for weights and biases
-				trnc_norm_init = tf.truncated_normal_initializer(stddev=0.1)
+				trnc_norm_init = tf.random_uniform_initializer(minval=-0.05, maxval=0.05)
 				cnst_init = tf.constant_initializer(0.1)
 
 				# create convolutions
@@ -72,9 +77,9 @@ class EmojiCNN:
 					outputs = list()
 					for width, filters in zip(kernel_widths, kernel_filters):
 						kernel = tf.get_variable(name="kernel_%s_%s" % (width, filters),
-								shape=[width, embed_dim, filters], initializer=trnc_norm_init)
+								shape=[width, embedding, filters], initializer=trnc_norm_init)
 						bias = tf.get_variable(name="kernel_bias_%s_%s" % (width, filters),
-								shape=[filters],	initializer=cnst_init)
+								shape=[filters], initializer=cnst_init)
 						conv = tf.nn.conv1d(embed_words, kernel, 1, 'VALID') + bias
 						pool = tf.reduce_max(conv, axis=1)
 						outputs.append(pool)
@@ -95,6 +100,7 @@ class EmojiCNN:
 
 				# output emoji softmax prediction
 				self.true_emojis = tf.placeholder(tf.int64, [None], name='emoji_ids')
+				true_probs = tf.one_hot(self.true_emojis, self.loader.emoji_vocab_size)
 				weight = tf.get_variable(name="softmax_weight",
 						shape=[hidden.get_shape()[1], self.loader.emoji_vocab_size],
 						initializer=trnc_norm_init)
@@ -102,11 +108,11 @@ class EmojiCNN:
 						initializer=cnst_init)
 				self.output = tf.nn.relu(tf.matmul(hidden, weight) + bias, name='output')
 				self.prediction = tf.argmax(tf.nn.softmax(self.output), axis=1, name='prediction')
-				
+
 				# loss metric
 				self.weights = tf.placeholder(tf.float32, None, name='weights')
 				unweighted_loss = tf.nn.softmax_cross_entropy_with_logits(
-						labels=tf.one_hot(self.true_emojis, self.loader.emoji_vocab_size), logits=self.output)
+						labels=true_probs, logits=self.output)
 				self.loss = tf.reduce_mean(self.weights * unweighted_loss, name='loss')
 
 				# optimizer and tracking
@@ -122,6 +128,7 @@ class EmojiCNN:
 				self.valid_loss = list()
 				print("model built")
 
+
 	# train model
 	def train(self, epoch):
 		self.loader.reset_batch(dataset='train')
@@ -131,10 +138,8 @@ class EmojiCNN:
 		for i in xrange(batch_count):
 			data = self.loader.next_batch(dataset='train')
 			if self.use_weights:
-				N = self.loader.batch_size
-				weights = np.zeros(N)
-				for j in xrange(N):
-					weights[j] = self.loader.weights[data[1][j]]
+				weights = self.loader.weights[data[1]]
+				weights *= np.sqrt(self.loader.batch_size) / np.linalg.norm(weights)
 			else:
 				weights = np.ones(self.loader.batch_size)
 

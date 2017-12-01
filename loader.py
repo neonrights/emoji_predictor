@@ -5,6 +5,7 @@ import string
 import os
 
 from collections import Counter
+from pandas import read_csv
 
 
 def save(obj, filename):
@@ -19,19 +20,20 @@ class WordLoader:
 	DATA2ID = {'train': 0, 'validation': 1, 'test': 2}
 	PATH = './data'
 
-	def __init__(self, data='5', batch_size=100):
+	def __init__(self, data='5', batch_size=100, glove=25):
 		self.batch_size = batch_size
 		try: # to load saved vocab data
 			print('loading saved vocabulary and processed data')
 			self.word2id, self.id2word, self.emoji2id, self.id2emoji, self.weights = load(os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
 			self.word_tensors, self.emoji_tensors = load(os.path.join(self.PATH, '%s_word_tensor.pkl' % data))
+			self.glove_embed = load(os.path.join(self.PATH, '%d_glove' % glove))
 			self.max_seq_len = self.word_tensors[0].shape[1]
 			self.samples = [tensor.shape[0] for tensor in self.word_tensors]
 			self.word_vocab_size = len(self.id2word)
 			self.emoji_vocab_size = len(self.emoji2id)
 		except (IOError, EOFError) as e:
 			print('failed to load, building vocabulary and processed data')
-			self._build_vocab(data)
+			self._build_vocab(data, glove)
 
 		print("%d words, %d emojis" % (self.word_vocab_size-2, self.emoji_vocab_size))
 
@@ -60,7 +62,8 @@ class WordLoader:
 		self.word_tensors = temp_word_tensors
 		self.emoji_tensors = temp_emoji_tensors
 
-	def _build_vocab(self, data):
+
+	def _build_vocab(self, data, glove):
 		# create vocab and ids from either character or words
 		filenames = [
 			os.path.join(self.PATH, '%s_train' % data),
@@ -77,7 +80,6 @@ class WordLoader:
 			with open(filename, 'r') as f:
 				line_count = 0
 				for line in f:
-					line = line.translate(None, string.punctuation) # strip punctuation
 					words = line.split()
 					emoji_counts[words[-1]] += 1
 					words = words[:-1]
@@ -94,22 +96,33 @@ class WordLoader:
 		for word, _ in word_counts.most_common():
 			self.word2id[word] = len(self.id2word)
 			self.id2word.append(word)
-
+			
 		# build emoji vocab
 		self.emoji2id = dict()
 		self.id2emoji = list()
 		self.weights = np.zeros(len(emoji_counts))
+		self.emoji_vocab_size = len(emoji_counts)
 		total_samples = sum(self.samples)
 		for emoji, count in emoji_counts.most_common():
 			self.emoji2id[emoji] = len(self.id2emoji)
 			self.id2emoji.append(emoji)
 			self.weights[self.emoji2id[emoji]] = total_samples / count
 
-		# normalize weights
-		self.weights /= self.weights.sum()
-		self.weights *= self.weights.shape[0]
 		self.word_vocab_size = len(self.id2word)
-		self.emoji_vocab_size = len(self.emoji2id)
+		self.emoji_vocab_size = len(self.id2emoji)
+
+		self.glove_embed = np.zeros((self.word_vocab_size, glove))
+		vocab = set(self.word2id.keys())
+		with open('GloVe/glove.twitter.27B.%dd.txt' % glove, 'r') as f:
+			for line in f:
+				tokens = line.split()
+				if tokens[0] in vocab:
+					vocab.remove(tokens[0])
+					self.glove_embed[self.word2id[tokens[0]], :] = np.array(tokens[1:], dtype=np.float32)
+
+		print("lost %d out of %d" % (len(vocab), self.word_vocab_size))
+		for word in vocab:
+			self.glove_embed[self.word2id[word], :] = np.random.uniform(low=-1.0, high=1.0, size=glove, dtype=np.float32)
 
 		# create tensor from word ids
 		self.word_tensors = list()
@@ -119,7 +132,6 @@ class WordLoader:
 			emoji_tensor = np.zeros((self.samples[idx]), dtype=np.int64)
 			with open(filename, 'r') as f:
 				for i, line in enumerate(f):
-					line = line.translate(None, string.punctuation)
 					words = line.split()
 					emoji_tensor[i] = self.emoji2id[words[-1]]
 					words = words[:-1]
@@ -132,6 +144,7 @@ class WordLoader:
 		# saved vocabulary and processed data
 		save([self.word2id, self.id2word, self.emoji2id, self.id2emoji, self.weights], os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
 		save([self.word_tensors, self.emoji_tensors], os.path.join(self.PATH, '%s_word_tensor.pkl' % data))
+		save(self.glove_embed, os.path.join(self.PATH, '%d_glove' % glove))
 
 
 	def next_batch(self, dataset='train'):
@@ -153,7 +166,6 @@ class WordLoader:
 		return self.batch_num[self.DATA2ID[dataset]]
 
 	def sentence2tensor(self, sentence):
-		cleaned = sentence.translate(None, string.punctuation)
 		words = cleaned.split()
 		tensor = np.zeros(len(words))
 		for i, word in enumerate(words):
