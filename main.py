@@ -10,13 +10,12 @@ with tf.Session() as sess:
 	model = EmojiCNN(sess,
 		data=str(K),
 		batch_size=100,
-		name='baseline-w',
+		name='baseline-r',
 		embedding=50,
 		kernel_widths=[3,4,5],
 		kernel_filters=[64,64,64],
 		layers=[],
-		weighted=True,
-		restore='latest')
+		resample=True)
 	train_loss, valid_loss = model.run(epochs=4)
 
 	# generate training data

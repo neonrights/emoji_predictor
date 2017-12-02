@@ -20,13 +20,13 @@ class WordLoader:
 	DATA2ID = {'train': 0, 'validation': 1, 'test': 2}
 	PATH = './data'
 
-	def __init__(self, data='5', batch_size=100, glove=25):
+	def __init__(self, data='5', batch_size=100, glove=25, resample=False):
 		self.batch_size = batch_size
 		try: # to load saved vocab data
 			print('loading saved vocabulary and processed data')
 			self.word2id, self.id2word, self.emoji2id, self.id2emoji, self.weights = load(os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
 			self.word_tensors, self.emoji_tensors = load(os.path.join(self.PATH, '%s_word_tensor.pkl' % data))
-			self.glove_embed = load(os.path.join(self.PATH, '%d_glove' % glove))
+			self.glove_embed = load(os.path.join(self.PATH, '%d_glove.pkl' % glove))
 			self.max_seq_len = self.word_tensors[0].shape[1]
 			self.samples = [tensor.shape[0] for tensor in self.word_tensors]
 			self.word_vocab_size = len(self.id2word)
@@ -36,6 +36,10 @@ class WordLoader:
 			self._build_vocab(data, glove)
 
 		print("%d words, %d emojis" % (self.word_vocab_size-2, self.emoji_vocab_size))
+
+		if resample:
+			self._resample(data)
+			self.samples[0] = self.emoji_tensors[0].shape[0]
 
 		# reshape data into batches
 		self.batch_num = [0, 0, 0]
@@ -61,6 +65,29 @@ class WordLoader:
 
 		self.word_tensors = temp_word_tensors
 		self.emoji_tensors = temp_emoji_tensors
+
+	# resample training data to even out classes
+	def _resample(self, data):
+		try:
+			print("attempting to load resampled data")
+			self.word_tensors[0], self.emoji_tensors[0] = load(os.path.join(self.PATH, '%s_resample.pkl' % data))
+		except (IOError, EOFError) as e:
+			print("failed to load, building resampled data")
+			n_resamples = self.samples[0] / self.emoji_vocab_size
+			temp_emoji_tensors = list()
+			temp_word_tensors = list()
+			for i in xrange(self.emoji_vocab_size):
+				indices = np.where(self.emoji_tensors[0] == i)[0]
+				r_indices = np.random.choice(indices, size=n_resamples, replace=True)
+				temp_word_tensors.append(self.word_tensors[0][r_indices, :])
+				temp_emoji_tensors.append(self.emoji_tensors[0][r_indices])
+
+			shuffled = np.arange(n_resamples * self.emoji_vocab_size)
+			np.random.shuffle(shuffled)
+			self.word_tensors[0] = np.concatenate(temp_word_tensors, axis=0)[shuffled, :]
+			self.emoji_tensors[0] = np.concatenate(temp_emoji_tensors)[shuffled]
+
+			save([self.word_tensors[0], self.emoji_tensors[0]], os.path.join(self.PATH, '%s_resample.pkl' % data))
 
 
 	def _build_vocab(self, data, glove):
@@ -122,7 +149,7 @@ class WordLoader:
 
 		print("lost %d out of %d" % (len(vocab), self.word_vocab_size))
 		for word in vocab:
-			self.glove_embed[self.word2id[word], :] = np.random.uniform(low=-1.0, high=1.0, size=glove, dtype=np.float32)
+			self.glove_embed[self.word2id[word], :] = np.random.uniform(low=-1.0, high=1.0, size=glove)
 
 		# create tensor from word ids
 		self.word_tensors = list()
@@ -144,7 +171,7 @@ class WordLoader:
 		# saved vocabulary and processed data
 		save([self.word2id, self.id2word, self.emoji2id, self.id2emoji, self.weights], os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
 		save([self.word_tensors, self.emoji_tensors], os.path.join(self.PATH, '%s_word_tensor.pkl' % data))
-		save(self.glove_embed, os.path.join(self.PATH, '%d_glove' % glove))
+		save(self.glove_embed, os.path.join(self.PATH, '%d_glove.pkl' % glove))
 
 
 	def next_batch(self, dataset='train'):

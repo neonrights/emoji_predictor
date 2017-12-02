@@ -7,10 +7,10 @@ import glob
 from loader import *
 
 class EmojiCNN:
-	def __init__(self, sess, data, name, kernel_widths, kernel_filters, batch_size=100, embedding=50, layers=list(), weighted=False, restore=None):
+	def __init__(self, sess, data, name, kernel_widths, kernel_filters, batch_size=100, embedding=50, layers=list(), weighted=False, resample=False, restore=None):
 		self.sess = sess
 		self.name = name
-		self.loader = WordLoader(data=data, batch_size=batch_size, glove=embedding)
+		self.loader = WordLoader(data=data, batch_size=batch_size, glove=embedding, resample=resample)
 		self.use_weights = weighted
 
 		try: # to restore object if desired
