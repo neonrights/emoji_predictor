@@ -6,10 +6,11 @@ plt.switch_backend('agg')
 from sklearn.metrics import *
 from keras.models import Model
 from keras.layers import *
+from keras import backend
 
 from loader import WordLoader
 
-K = 10
+K = 20
 epochs = 100
 data = WordLoader(data=K, glove=50, resample=True)
 
@@ -24,9 +25,17 @@ for i in range(3,6):
 	convs.append(flat)
 
 cnn_output = Concatenate()(convs)
-relu = Activation('relu')(cnn_output)
-dropout = Dropout(0.5)(relu)
-probs = Dense(K, activation='softmax')(dropout)
+cnn_relu = Activation('relu')(cnn_output)
+cnn_dropout = Dropout(0.5)(cnn_relu)
+
+N = 3*64
+trans_gate = Dense(N, activation='sigmoid')(cnn_dropout)
+trans_output = Multiply()([trans_gate, Dense(N, activation='relu')(cnn_dropout)])
+carry_output = Multiply()([Lambda(lambda x: 1 - x)(trans_gate), cnn_dropout])
+hwy_output = Add()([trans_output, carry_output])
+hwy_dropout = Dropout(0.5)(hwy_output)
+
+probs = Dense(K, activation='softmax')(hwy_dropout)
 
 model = Model(inputs=word_ids, outputs=probs)
 model.compile(optimizer='adam', loss='categorical_crossentropy')
