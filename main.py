@@ -5,18 +5,17 @@ plt.switch_backend('agg')
 
 from emoji_cnn import EmojiCNN
 
-K = 20
+K = 5
 with tf.Session() as sess:
 	model = EmojiCNN(sess,
 		data=str(K),
 		batch_size=100,
-		name='baseline-r',
+		name='baseline',
 		embedding=50,
-		kernel_widths=[3,4,5],
-		kernel_filters=[64,64,64],
-		layers=[],
-		resample=True)
-	train_loss, valid_loss = model.run(epochs=4)
+		kernel_widths=[3,4,57],
+		kernel_filters=[64,64,64])
+	model.run(epochs=5)
+	train_loss, valid_loss = model.train_loss, model.valid_loss
 
 	# generate training data
 	fig = plt.figure()
@@ -32,7 +31,7 @@ with tf.Session() as sess:
 
 	# generate performance metrics
 	conf_mat = np.zeros((K,K), dtype=np.int32)
-	samples = model.loader.batches[2]
+	samples = model.loader.batch_count('test')
 	model.loader.reset_batch('test')
 	for i in xrange(samples):
 		data = model.loader.next_batch('test')

@@ -5,7 +5,7 @@ plt.switch_backend('agg')
 
 from emoji_char_lstm import EmojiCharLSTM
 
-K = 20
+K = 5
 with tf.Session() as sess:
 	widths = [1,2,3,4,5,6]
 	filters = [25*width for width in widths]
@@ -33,16 +33,7 @@ with tf.Session() as sess:
 	plt.close(fig)
 
 	# generate performance metrics
-	conf_mat = np.zeros((K,K), dtype=np.int32)
-	samples = model.loader.batch_count('test')
-	model.loader.reset_batch('test')
-	for i in xrange(samples):
-		data = model.loader.next_batch('test')
-		predicted = sess.run(model.prediction, feed_dict={model.input_words: data[0], model.keep_rate: 1.0})
-		true_vals = data[1]
-
-		for j in xrange(100):
-			conf_mat[predicted[j], true_vals[j]] += 1
+	conf_mat = model.confusion_matrix('train')
 
 	fig, ax = plt.subplots()
 	ax.matshow(conf_mat, cmap=plt.cm.Blues)

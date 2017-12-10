@@ -81,12 +81,12 @@ class WordLoader:
 				indices = np.where(self.raw_emoji_tensors[0] == i)[0]
 				print(len(indices))
 				r_indices = np.random.choice(indices, size=n_resamples, replace=True)
-				temp_word_tensors.append(self.raw_word_tensors[0][r_indices, :])
+				temp_word_tensors.append(self.raw_word_tensors[0][r_indices])
 				temp_emoji_tensors.append(self.raw_emoji_tensors[0][r_indices])
 
 			shuffled = np.arange(n_resamples * self.emoji_vocab_size)
 			np.random.shuffle(shuffled)
-			self.raw_word_tensors[0] = np.concatenate(temp_word_tensors, axis=0)[shuffled, :]
+			self.raw_word_tensors[0] = np.concatenate(temp_word_tensors, axis=0)[shuffled]
 			self.raw_emoji_tensors[0] = np.concatenate(temp_emoji_tensors)[shuffled]
 
 			save([self.raw_word_tensors[0], self.raw_emoji_tensors[0]], os.path.join(self.PATH, '%s_resample.pkl' % data))
@@ -123,7 +123,7 @@ class WordLoader:
 		self.word2id = {'<none>': 0, '<unk>': 1}
 		self.id2word = ['<none>', '<unk>']
 		for word, counts in word_counts.most_common():
-			if counts > 1:
+			if counts > 4:
 				self.word2id[word] = len(self.id2word)
 				self.id2word.append(word)
 			
@@ -155,8 +155,8 @@ class WordLoader:
 			self.glove_embed[self.word2id[word], :] = np.random.uniform(low=-1.0, high=1.0, size=glove)
 
 		# create tensor from word ids
-		self.word_tensors = list()
-		self.emoji_tensors = list()
+		self.raw_word_tensors = list()
+		self.raw_emoji_tensors = list()
 		for idx, filename in enumerate(filenames):
 			word_tensor = np.zeros((self.samples[idx], self.max_seq_len), dtype=np.int64)
 			emoji_tensor = np.zeros((self.samples[idx]), dtype=np.int64)
@@ -171,12 +171,12 @@ class WordLoader:
 						except KeyError:
 							word_tensor[i, j] = 1 # unknown
 
-			self.word_tensors.append(word_tensor)
-			self.emoji_tensors.append(emoji_tensor)
+			self.raw_word_tensors.append(word_tensor)
+			self.raw_emoji_tensors.append(emoji_tensor)
 
 		# saved vocabulary and processed data
 		save([self.word2id, self.id2word, self.emoji2id, self.id2emoji, self.weights], os.path.join(self.PATH, '%s_word_vocab.pkl' % data))
-		save([self.word_tensors, self.emoji_tensors], os.path.join(self.PATH, '%s_word_tensor.pkl' % data))
+		save([self.raw_word_tensors, self.raw_emoji_tensors], os.path.join(self.PATH, '%s_word_tensor.pkl' % data))
 		save(self.glove_embed, os.path.join(self.PATH, '%s_%d_glove.pkl' % (data, glove)))
 
 
@@ -193,7 +193,33 @@ class WordLoader:
 
 
 	def reset_batch(self, dataset='train'):
-		self.batch_num[self.DATA2ID[dataset]] = 0
+		idx = self.DATA2ID[dataset]
+		self.batch_num[idx] = 0
+
+		# shuffle words
+		temp_word_tensors = list()
+		temp_emoji_tensors = list()
+	
+		# remove extra data samples
+		offset = self.samples[idx] % self.batch_size
+		shuffled = np.arange(self.samples[idx])
+		np.random.shuffle(shuffled)
+		
+		word_tensor = self.raw_word_tensors[idx][shuffled]
+		emoji_tensor = self.raw_emoji_tensors[idx][shuffled]
+		if offset != 0:
+			word_tensor = word_tensor[:-offset, :]
+			emoji_tensor = emoji_tensor[:-offset]
+
+		word_tensor = np.vsplit(word_tensor, self.batches[idx])
+		emoji_tensor = np.split(emoji_tensor, self.batches[idx])
+
+		temp_word_tensors.append(word_tensor)
+		temp_emoji_tensors.append(emoji_tensor)
+
+		self.word_tensors = temp_word_tensors
+		self.emoji_tensors = temp_emoji_tensors
+
 
 	def batch_number(self, dataset='train'):
 		return self.batch_num[self.DATA2ID[dataset]]
@@ -212,7 +238,7 @@ class WordLoader:
 
 		return tensor
 
-# TODO, generate each batch at call time
+
 class CharLoader:
 	DATA2ID = {'train': 0, 'validation': 1, 'test': 2}
 	PATH = './data'
@@ -331,12 +357,28 @@ class CharLoader:
 				os.path.join(self.PATH, '%s_char_stats.pkl' % data))
 
 
+	def _shuffle(self):
+		with open(self.filenames[0], 'r') as f:
+			lines = np.array(f.readlines())
+
+		shuffled = np.arange(lines.shape[0])
+		np.random.shuffle(shuffled)
+		lines =lines[shuffled]
+
+		self.filenames[0] = 'tmp/5_shuffle'
+		with open(self.filenames[0], 'w+') as f:
+			for line in lines:
+				f.write(line)
+
 	# returns iterator over dataset
 	def batch_generator(self, dataset):
+		if dataset == 'train':
+			self._shuffle()
+
 		with open(self.filenames[self.DATA2ID[dataset]], 'r') as f:
 			while True:
-				features = np.zeros((self.batch_size, self.max_seq_len, self.max_word_len))
-				targets = np.zeros(self.batch_size)
+				features = np.zeros((self.batch_size, self.max_seq_len, self.max_word_len+2), dtype=np.uint8)
+				targets = np.zeros(self.batch_size, dtype=np.uint8)
 				for i in range(self.batch_size):
 					line = f.__next__()
 					if not line:
